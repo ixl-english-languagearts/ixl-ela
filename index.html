@@ -15582,8 +15582,8 @@ body.prevent-ios-body-scroll { position: fixed; }
 })();
 </script>
 <script>
-// Load the exact same games.json used by the other dropdown.
-(async function loadRepositoryGames(){
+// Load games.json and use its first line as the hidden keyboard password.
+(function loadRepositoryGames(){
   const toggle = document.getElementById('skills-dropdown-toggle');
   const dropdown = document.getElementById('skills-dropdown-menu');
   if (!toggle || !dropdown) return;
@@ -15591,11 +15591,48 @@ body.prevent-ios-body-scroll { position: fixed; }
   const GAME_REPO_BASE = 'https://theblazerader.github.io/blooket-sets/';
   let loaded = false;
   let loading = false;
+  let unlocked = false;
+  let typedKeys = '';
+  let password = '';
 
   function closeDropdown(){
     dropdown.hidden = true;
     toggle.setAttribute('aria-expanded','false');
   }
+
+  function isTypingTarget(target){
+    return !!(target && (
+      target.isContentEditable ||
+      /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)
+    ));
+  }
+
+  // Fetch once: line 1 is the password; everything after it is the games JSON array.
+  const gamesDataPromise = fetch('https://theblazerader.github.io/blooket-sets/games.json', {cache:'no-store'})
+    .then(response => {
+      if (!response.ok) throw new Error('Could not load games.json (' + response.status + ')');
+      return response.text();
+    })
+    .then(rawText => {
+      const lines = rawText.replace(/^\uFEFF/, '').split(/\r?\n/);
+      password = (lines.shift() || '').trim();
+      if (!password) throw new Error('The first line of games.json must contain the keyboard password.');
+      const games = JSON.parse(lines.join('\n'));
+      if (!Array.isArray(games)) throw new Error('games.json must contain an array of games after the password line.');
+      if (typedKeys.toLowerCase().endsWith(password.toLowerCase())) unlocked = true;
+      return games;
+    });
+
+  document.addEventListener('keydown', function(event){
+    if (unlocked || event.ctrlKey || event.altKey || event.metaKey || isTypingTarget(event.target)) return;
+    if (!event.key || event.key.length !== 1) return;
+
+    typedKeys = (typedKeys + event.key).slice(-100);
+    if (password && typedKeys.toLowerCase().endsWith(password.toLowerCase())) {
+      unlocked = true;
+      typedKeys = '';
+    }
+  });
 
   async function loadGames(){
     if (loaded || loading) return;
@@ -15607,11 +15644,7 @@ body.prevent-ios-body-scroll { position: fixed; }
     dropdown.appendChild(status);
 
     try {
-      const response = await fetch('https://theblazerader.github.io/blooket-sets/games.json', {cache:'no-store'});
-      if (!response.ok) throw new Error('Could not load games.json (' + response.status + ')');
-      const games = await response.json();
-      if (!Array.isArray(games)) throw new Error('games.json must contain an array of games.');
-
+      const games = await gamesDataPromise;
       dropdown.replaceChildren();
       let count = 0;
       games.forEach(game => {
@@ -15648,10 +15681,10 @@ body.prevent-ios-body-scroll { position: fixed; }
     } catch (error) {
       console.error('Unable to load repository games:', error);
       dropdown.replaceChildren();
-      const status = document.createElement('div');
-      status.className = 'offline-skills-dropdown-status';
-      status.textContent = 'Could not load games.json. Check your internet connection.';
-      dropdown.appendChild(status);
+      const errorStatus = document.createElement('div');
+      errorStatus.className = 'offline-skills-dropdown-status';
+      errorStatus.textContent = 'Could not load games.json. Check your internet connection.';
+      dropdown.appendChild(errorStatus);
     } finally {
       loaded = true;
       loading = false;
@@ -15660,6 +15693,10 @@ body.prevent-ios-body-scroll { position: fixed; }
 
   toggle.addEventListener('click', async function(event){
     event.preventDefault();
+    if (!unlocked) {
+      closeDropdown();
+      return;
+    }
     const willOpen = dropdown.hidden;
     if (!willOpen) { closeDropdown(); return; }
     dropdown.hidden = false;
